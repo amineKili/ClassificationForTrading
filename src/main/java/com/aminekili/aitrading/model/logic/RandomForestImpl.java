@@ -18,8 +18,6 @@ import java.util.Arrays;
 
 public class RandomForestImpl implements BaseModel {
 
-    // TODO: train using multiple files => Goals is to have a model that can predict the future
-
     /**
      * This class is responsible for the implementation of the Random Forest algorithm
      * it will be used to decide whether to execute flag should be set to true or false
@@ -107,7 +105,6 @@ public class RandomForestImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void evaluateModelPrecision() throws IOException, URISyntaxException {
-
         LoggingUtils.print("Evaluating model precision");
         var trainingData = CsvReader.read(this.trainingPath, formula);
 
