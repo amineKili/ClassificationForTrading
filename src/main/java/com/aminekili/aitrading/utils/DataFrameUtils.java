@@ -4,10 +4,16 @@ package com.aminekili.aitrading.utils;
 import com.aminekili.aitrading.service.CsvReader;
 import smile.data.DataFrame;
 import smile.data.formula.Formula;
+import smile.data.vector.BaseVector;
+import smile.data.vector.ByteVector;
+import smile.data.vector.DoubleVector;
+import smile.data.vector.StringVector;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
 
@@ -19,11 +25,11 @@ import java.util.function.Predicate;
  */
 public class DataFrameUtils {
 
-    public DataFrame merge(DataFrame dataframe1, DataFrame dataframe2) {
+    public static DataFrame merge(DataFrame dataframe1, DataFrame dataframe2) {
         return dataframe1.merge(dataframe2);
     }
 
-    public DataFrame[] split(DataFrame dataframe, double ratio) {
+    public static DataFrame[] split(DataFrame dataframe, double ratio) {
         DataFrame[] dataFrames = new DataFrame[2];
         int count = dataframe.size();
         int splitIndex = (int) (count * ratio);
@@ -32,26 +38,121 @@ public class DataFrameUtils {
         return dataFrames;
     }
 
-    public DataFrame normalize(DataFrame dataframe) {
-        Map<Integer, Double> min = new HashMap<>();
-        Map<Integer, Double> max = new HashMap<>();
+    /**
+     * map string categorical values to byte values
+     *
+     * @param dataframe
+     * @param columns
+     * @return
+     */
+    public static Map<String, Map<String, Byte>> mapCategoricalColumns(DataFrame dataframe, String... columns) {
+        Map<String, Map<String, Byte>> map = new HashMap<>();
+        for (String column : columns) {
+            String[] values = dataframe.column(column).toStringArray();
+            for (int i = 0; i < dataframe.size(); i++) {
+                byte value = dataframe.column(column).getByte(i);
+                if (!map.containsKey(column)) {
+                    map.put(column, new HashMap<>());
+                }
+                if (!map.get(column).containsKey(values[i])) {
+                    map.get(column).put(values[i], value);
+                }
+            }
+        }
+        return map;
+    }
+
+    /**
+     * @param dataframe
+     * @param columns
+     * @return
+     */
+    public static Map<String, Map<Byte, String>> mapValuesToCategoricalColumns(DataFrame dataframe, String... columns) {
+        Map<String, Map<Byte, String>> map = new HashMap<>();
+        for (String column : columns) {
+            String[] values = dataframe.column(column).toStringArray();
+            for (int i = 0; i < dataframe.size(); i++) {
+                byte value = dataframe.column(column).getByte(i);
+                if (!map.containsKey(column)) {
+                    map.put(column, new HashMap<>());
+                }
+                if (!map.get(column).containsKey(value)) {
+                    map.get(column).put(value, values[i]);
+                }
+            }
+        }
+        return map;
+    }
+
+    public static DataFrame toStringCategoricalDataFrame(DataFrame dataframe, Map<String, Map<Byte, String>> valuesPerCategoryPerColumn) {
+        var columns = dataframe.names();
+        var columnsVectors = new ArrayList<BaseVector>();
+
+        for (String column : columns) {
+            if (valuesPerCategoryPerColumn.containsKey(column)) {
+                var valuesPerCategory = valuesPerCategoryPerColumn.get(column);
+                var vector = dataframe.column(column);
+                var values = new String[vector.size()];
+                for (int i = 0; i < vector.size(); i++) {
+                    values[i] = valuesPerCategory.get(vector.getByte(i));
+                }
+
+                columnsVectors.add(StringVector.of(column, values));
+            } else {
+                columnsVectors.add(dataframe.column(column));
+            }
+        }
+        BaseVector[] vectors = new BaseVector[columnsVectors.size()];
+        columnsVectors.toArray(vectors);
+        return DataFrame.of(vectors);
+    }
+
+    public static DataFrame toByteCategoricalDataFrame(DataFrame dataframe, Map<String, Map<String, Byte>> categoryPerValuePerColumn) {
+        var columns = dataframe.names();
+        var columnsVectors = new ArrayList<BaseVector>();
+
+        for (String column : columns) {
+            if (categoryPerValuePerColumn.containsKey(column)) {
+                var categoryPerValue = categoryPerValuePerColumn.get(column);
+                var vector = dataframe.column(column);
+                byte[] values = new byte[vector.size()];
+                var vectorStringValues = vector.toStringArray();
+                for (int i = 0; i < vector.size(); i++) {
+                    values[i] = categoryPerValue.get(vectorStringValues[i]);
+                }
+                columnsVectors.add(ByteVector.of(column, values));
+            } else {
+                columnsVectors.add(dataframe.column(column));
+            }
+        }
+        BaseVector[] vectors = new BaseVector[columnsVectors.size()];
+        columnsVectors.toArray(vectors);
+        return DataFrame.of(vectors);
+    }
+
+
+    public static Triplet<DataFrame, Map<String, Double>, Map<String, Double>> normalize(DataFrame dataframe) {
+
+        Map<String, Double> min = new HashMap<>();
+        Map<String, Double> max = new HashMap<>();
 
         // Iterate over columns
         // Find min and max values for each column
-        for (int i = 0; i < dataframe.ncols(); i++) {
-            double[] column = dataframe.column(i).toDoubleArray();
+        String[] names = dataframe.names();
+        for (String name : names) {
+            double[] values = dataframe.column(name).toDoubleArray();
             double minVal = Double.MAX_VALUE;
             double maxVal = Double.MIN_VALUE;
-            for (double val : column) {
-                if (val < minVal) {
-                    minVal = val;
+            for (double value : values) {
+                if (value < minVal) {
+                    minVal = value;
                 }
-                if (val > maxVal) {
-                    maxVal = val;
+                if (value > maxVal) {
+                    maxVal = value;
                 }
             }
-            min.put(i, minVal);
-            max.put(i, maxVal);
+            min.put(name, minVal);
+            max.put(name, maxVal);
         }
 
         // Iterate over columns
@@ -59,18 +160,29 @@ public class DataFrameUtils {
         // Create a copy of dataframe
         // Put normalized values in the copy
         double[][] normalizedData = new double[dataframe.nrows()][dataframe.ncols()];
-        String[] names = dataframe.names();
-        for (int i = 0; i < dataframe.ncols(); i++) {
-            double[] column = dataframe.column(i).toDoubleArray();
-            double minVal = min.get(i);
-            double maxVal = max.get(i);
-            for (int j = 0; j < column.length; j++) {
-                double normalizedVal = (column[j] - minVal) / (maxVal - minVal);
-                normalizedData[j][i] = normalizedVal;
+        for (var name : names) {
+            double[] column = dataframe.column(name).toDoubleArray();
+            for (int i = 0; i < column.length; i++) {
+                double normalizedValue = (column[i] - min.get(name)) / (max.get(name) - min.get(name));
+                normalizedData[i][dataframe.columnIndex(name)] = normalizedValue;
             }
         }
 
-        return DataFrame.of(normalizedData, names);
+        var normalizedDataframe = DataFrame.of(normalizedData, names);
+        return new Triplet<>(normalizedDataframe, min, max);
+    }
+
+    public static DataFrame denormalize(DataFrame dataframe, Map<String, Double> min, Map<String, Double> max) {
+        double[][] denormalizedData = new double[dataframe.nrows()][dataframe.ncols()];
+        String[] names = dataframe.names();
+        for (var name : names) {
+            double[] column = dataframe.column(name).toDoubleArray();
+            for (int i = 0; i < column.length; i++) {
+                double denormalizedValue = column[i] * (max.get(name) - min.get(name)) + min.get(name);
+                denormalizedData[i][dataframe.columnIndex(name)] = denormalizedValue;
+            }
+        }
+        return DataFrame.of(denormalizedData, names);
     }
 
     /**
@@ -81,17 +193,20 @@ public class DataFrameUtils {
      * @throws IOException
      * @throws URISyntaxException
      */
-    public DataFrame mergeMultipleFiles(DataFrame[] paths) throws IOException, URISyntaxException {
+    public static DataFrame mergeMultipleFiles(DataFrame[] paths) throws IOException, URISyntaxException {
         // Dataframe must be normalized before merging, otherwise it will cause inconsistency in the data
-
-        DataFrame merged = paths[0];
-        var normalized = normalize(merged);
-        for (int i = 1; i < paths.length; i++) {
-            var normalized2 = normalize(paths[i]);
-            merged = merge(normalized, normalized2);
-            normalized = normalize(merged);
-        }
-        return merged;
+        //        DataFrame merged = paths[0];
+        //        var normalized = normalize(merged);
+        //         TODO: Identify each dataframe with a unique id, will be used to denormalize the data
+        //         TODO: Verify if there is price jumps in the data, before merging
+        //        for (int i = 1; i < paths.length; i++) {
+        //            var normalized2 = normalize(paths[i]);
+        //             TODO: denormalize multiple will make the data inconsistent, since each dataframe is normalized separately and therefore has different min and max values
+        //            merged = merge(normalized, normalized2.getFirst());
+        //            normalized = normalize(merged);
+        //        }
+        //        return merged;
+        return null;
     }
 
 
@@ -102,30 +217,73 @@ public class DataFrameUtils {
      * @throws IOException
      * @throws URISyntaxException
      */
-    public DataFrame filter(DataFrame dataframe, String columnName, Predicate<Double> predicate) throws IOException, URISyntaxException {
-        double[][] resultData = new double[dataframe.nrows()][dataframe.ncols()];
-        String[] names = dataframe.names();
-        int line = 0;
+    public static DataFrame filter(DataFrame dataframe, String columnName, Predicate<Double> predicate) throws IOException, URISyntaxException {
+        var columnsVectors = new ArrayList<BaseVector>();
+        var columns = dataframe.names();
+        List<Integer> rowsToKeep = new ArrayList<>();
         for (int i = 0; i < dataframe.nrows(); i++) {
-            if (!predicate.test(dataframe.getDouble(i, columnName))) {
-                continue;
+            if (predicate.test(dataframe.column(columnName).getDouble(i))) {
+                rowsToKeep.add(i);
             }
-            for (int j = 0; j < dataframe.ncols(); j++) {
-                resultData[line][j] = dataframe.getDouble(i, j);
-            }
-            line++;
         }
-        return DataFrame.of(resultData, names);
+
+        LoggingUtils.print("Rows to keep: " + (rowsToKeep.size()));
+
+
+        int line = 0;
+        for (String column : columns) {
+            line = 0;
+            var vector = dataframe.column(column);
+            if (vector.field().type.isDouble()) {
+                double[] newValues = new double[rowsToKeep.size()];
+                for (int i = 0; i < dataframe.nrows(); i++) {
+                    if (rowsToKeep.contains(i)) {
+                        newValues[line] = vector.getDouble(i);
+                        line++;
+                    }
+                }
+                columnsVectors.add(DoubleVector.of(column, newValues));
+            } else if (vector.field().type.isByte()) {
+                byte[] newValues = new byte[rowsToKeep.size()];
+                for (int i = 0; i < dataframe.nrows(); i++) {
+                    if (rowsToKeep.contains(i)) {
+                        newValues[line] = vector.getByte(i);
+                        line++;
+                    }
+                }
+                columnsVectors.add(ByteVector.of(column, newValues));
+            } else {
+                String[] values = dataframe.column(column).toStringArray();
+                String[] newValues = new String[rowsToKeep.size()];
+                for (int i = 0; i < dataframe.nrows(); i++) {
+                    if (rowsToKeep.contains(i)) {
+                        newValues[line] = values[i];
+                        line++;
+                    }
+                }
+                columnsVectors.add(StringVector.of(column, newValues));
+            }
+        }
+        BaseVector[] vectors = new BaseVector[columnsVectors.size()];
+        columnsVectors.toArray(vectors);
+        return DataFrame.of(vectors);
     }
 
     public static void main(String... args) throws IOException, URISyntaxException {
+
         final Formula formula = Formula.of("EXECUTE", "WAP", "Count", "Minute", "Tesla3", "Tesla6", "Tesla9", "Decision");
 
         var dataframe = CsvReader.read("src/main/resources/AUD_train.csv", formula);
         LoggingUtils.print("Dataframe\n" + dataframe.toString());
         LoggingUtils.print("Dataframe\n" + dataframe.summary().toString());
 
-        var filtered = new DataFrameUtils().filter(dataframe, "Minute", val -> val == 20 || val == 40 || val == 0);
+        var categoricalMapDouble = DataFrameUtils.mapCategoricalColumns(dataframe, "EXECUTE", "Decision");
+        LoggingUtils.print("Categorical map double\n" + categoricalMapDouble.toString());
+
+        var categoricalMapString = DataFrameUtils.mapValuesToCategoricalColumns(dataframe, "EXECUTE", "Decision");
+        LoggingUtils.print("Categorical map string\n" + categoricalMapString.toString());
+
+        var filtered = DataFrameUtils.filter(dataframe, "Minute", val -> val == 20 || val == 40 || val == 0);
         LoggingUtils.print("Filtered\n" + filtered.toString());
         LoggingUtils.print("Filtered\n" + filtered.summary().toString());
 
@@ -133,12 +291,56 @@ public class DataFrameUtils {
         LoggingUtils.print("Formatted\n" + formatted.toString());
         LoggingUtils.print("Formatted\n" + formatted.schema().toString());
 
-        var dataframeUtils = new DataFrameUtils();
 
-        var normalizedDataframe = dataframeUtils.normalize(dataframe);
+        var normalizedDataframe = DataFrameUtils.normalize(dataframe);
 
         LoggingUtils.print("Normalized\n" + normalizedDataframe.toString());
-        LoggingUtils.print("Normalized\n" + normalizedDataframe.summary().toString());
+//        LoggingUtils.print("Normalized\n" + normalizedDataframe.summary().toString());
+    }
+
+    public static void main3(String... args) throws IOException, URISyntaxException {
+
+        final Formula formula = Formula.of("EXECUTE", "WAP", "Count", "Minute", "Tesla3", "Tesla6", "Tesla9", "Decision");
+
+        var dataframe = CsvReader.read("src/main/resources/AUD_train.csv", formula);
+
+        LoggingUtils.print("Initial DataFrame\n" + dataframe.toString());
+
+        var categoricalMapDouble = DataFrameUtils.mapCategoricalColumns(dataframe, "EXECUTE", "Decision");
+        LoggingUtils.print("Categorical map double\n" + categoricalMapDouble.toString());
+
+        var categoricalMapString = DataFrameUtils.mapValuesToCategoricalColumns(dataframe, "EXECUTE", "Decision");
+        LoggingUtils.print("Categorical map string\n" + categoricalMapString.toString());
+
+        var doubleOnlyDataFrame = DataFrameUtils.toByteCategoricalDataFrame(dataframe, categoricalMapDouble);
+
+        LoggingUtils.print("Double only dataframe\n" + doubleOnlyDataFrame.toString());
+
+//        var normalizedDataframe = DataFrameUtils.toCategoricalDataFrame(doubleOnlyDataFrame, categoricalMapString);
+//
+//        LoggingUtils.print("Normalized\n" + normalizedDataframe.toString());
+    }
+
+    public static void main4(String... args) throws IOException, URISyntaxException {
+        final Formula formula = Formula.of("EXECUTE", "WAP", "Count", "Minute", "Tesla3", "Tesla6", "Tesla9", "Decision");
+
+        var dataframe = CsvReader.read("src/main/resources/AUD_train.csv", formula);
+
+        LoggingUtils.print("Initial DataFrame\n" + dataframe.toString());
+
+        var categoricalMapDouble = DataFrameUtils.mapCategoricalColumns(dataframe, "EXECUTE", "Decision");
+        LoggingUtils.print("Categorical map double\n" + categoricalMapDouble.toString());
+
+        var categoricalMapString = DataFrameUtils.mapValuesToCategoricalColumns(dataframe, "EXECUTE", "Decision");
+        LoggingUtils.print("Categorical map string\n" + categoricalMapString.toString());
+
+        var doubleOnlyDataFrame = DataFrameUtils.toByteCategoricalDataFrame(dataframe, categoricalMapDouble);
+
+        LoggingUtils.print("Double only dataframe\n" + doubleOnlyDataFrame.toString());
+
+//        var normalizedDataframe = DataFrameUtils.toCategoricalDataFrame(doubleOnlyDataFrame, categoricalMapString);
+//
+//        LoggingUtils.print("Normalized\n" + normalizedDataframe.toString());
     }
 
 

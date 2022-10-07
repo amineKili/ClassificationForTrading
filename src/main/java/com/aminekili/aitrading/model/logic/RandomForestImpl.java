@@ -2,9 +2,12 @@ package com.aminekili.aitrading.model.logic;
 
 import com.aminekili.aitrading.model.BaseModel;
 import com.aminekili.aitrading.service.CsvReader;
+import com.aminekili.aitrading.utils.DataFrameUtils;
 import com.aminekili.aitrading.utils.LoggingUtils;
+import com.aminekili.aitrading.utils.Pair;
 import smile.base.cart.SplitRule;
 import smile.classification.RandomForest;
+import smile.data.DataFrame;
 import smile.data.Tuple;
 import smile.data.formula.Formula;
 import smile.math.MathEx;
@@ -15,6 +18,10 @@ import java.io.IOException;
 import java.net.URISyntaxException;
 import java.text.MessageFormat;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.function.Predicate;
 
 public class RandomForestImpl implements BaseModel {
 
@@ -32,18 +39,27 @@ public class RandomForestImpl implements BaseModel {
     private final String testingPath;
     private final String modelPath;
     private RandomForest model;
+    private final List<Pair<String, Predicate<Double>>> predicatePerColumn;
+    private final Properties properties;
+    private Map<String, Map<String, Byte>> stringCategoryMapByteCategory;
+    private Map<String, Map<Byte, String>> byteCategoryMapStringCategory;
+
 
     public static final Formula formula = Formula.of("EXECUTE", "WAP", "Count", "Minute", "Tesla3", "Tesla6", "Tesla9", "Decision");
 
 
     public static void main(String... args) {
+
     }
 
-    public RandomForestImpl(String trainDataSetPath, String testDateSetPath, String modelPath) throws IOException, URISyntaxException {
+    public RandomForestImpl(String trainDataSetPath, String testDateSetPath, String modelPath, List<Pair<String, Predicate<Double>>> predicatePerColumn) throws IOException, URISyntaxException {
         MathEx.setSeed(19650218);
         this.trainingPath = trainDataSetPath;
         this.testingPath = testDateSetPath;
         this.modelPath = modelPath;
+        this.predicatePerColumn = predicatePerColumn;
+        properties = new java.util.Properties();
+        properties.setProperty("smile.random.forest.trees", String.valueOf(NUMBER_OF_TREES));
     }
 
     /**
@@ -53,20 +69,11 @@ public class RandomForestImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void train() throws IOException, URISyntaxException {
-        var trainingData = CsvReader.read(this.trainingPath, formula);
+        DataFrame byteOnlyData = getDataFrameReady(trainingPath, "TRAINING");
 
-        LoggingUtils.print("Training data size: " + trainingData.size());
-        LoggingUtils.print("Schema: " + trainingData.schema());
-        LoggingUtils.print("Formula: " + formula);
+        var forest = RandomForest.fit(formula, byteOnlyData, properties);
 
-        LoggingUtils.print("Number of trees: " + NUMBER_OF_TREES);
-
-        var prop = new java.util.Properties();
-        prop.setProperty("smile.random.forest.trees", "200");
-
-        var forest = RandomForest.fit(formula, trainingData, prop);
-        LoggingUtils.print("Model: " + forest);
-        LoggingUtils.print("Importance " + Arrays.toString(forest.importance()));
+        LoggingUtils.print("Model metrics: " + forest.metrics());
         this.model = forest;
     }
 
@@ -77,25 +84,15 @@ public class RandomForestImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void test() throws IOException, URISyntaxException {
-        var testData = CsvReader.read(this.testingPath, formula);
+        var dataFrame = getDataFrameReady(testingPath, "TEST");
 
-        LoggingUtils.print("Testing data size: " + testData.size());
-        LoggingUtils.print("Schema: " + testData.schema());
-        LoggingUtils.print("Formula: " + formula);
-
-
-        for (int i = 0; i < testData.size(); i++) {
-            var row = testData.get(i);
+        for (int i = 0; i < dataFrame.size(); i++) {
+            var row = dataFrame.get(i);
             var prediction = model.predict(row);
-            LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", prediction, row.getByte("EXECUTE")));
+            var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction).byteValue(), "NONE");
+            var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").get(row.getByte("EXECUTE"));
+            LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
         }
-
-//        var predictions = model.predict(testData);
-//        for(int i=0; i<predictions.length; i++){
-//            LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictions[i], testData.byteVector("EXECUTE").get(i)));
-//        }
-//        LoggingUtils.print("Predictions: " + Arrays.toString(predictions));
-//        LoggingUtils.print("Actual: " + Arrays.deepToString(testData.select("EXECUTE").toStrings(10000)));
     }
 
     /**
@@ -105,15 +102,37 @@ public class RandomForestImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void evaluateModelPrecision() throws IOException, URISyntaxException {
-        LoggingUtils.print("Evaluating model precision");
-        var trainingData = CsvReader.read(this.trainingPath, formula);
+        DataFrame byteOnlyData = getDataFrameReady(trainingPath, "Evaluation");
 
-        ClassificationMetrics metrics = LOOCV.classification(formula, trainingData,
+        ClassificationMetrics metrics = LOOCV.classification(formula, byteOnlyData,
                 (f, x) -> RandomForest.fit(f, x, 20, 2, SplitRule.GINI, 8, 10, 1, 1.0, new int[]{1, 100}, Arrays.stream(seeds))
         );
 
         LoggingUtils.print(MessageFormat.format("Evaluation metrics = {0}", metrics.toString()));
         LoggingUtils.print(MessageFormat.format("Accuracy = {0}", metrics.accuracy));
+    }
+
+    private DataFrame getDataFrameReady(String path, String phase) throws IOException, URISyntaxException {
+        var trainingData = CsvReader.read(path, formula);
+
+        stringCategoryMapByteCategory = DataFrameUtils.mapCategoricalColumns(trainingData, "EXECUTE", "Decision");
+        byteCategoryMapStringCategory = DataFrameUtils.mapValuesToCategoricalColumns(trainingData, "EXECUTE", "Decision");
+
+        var byteOnlyData = DataFrameUtils.toByteCategoricalDataFrame(trainingData, stringCategoryMapByteCategory);
+        byteOnlyData = formula.frame(byteOnlyData);
+
+        LoggingUtils.format("{0} | Before Filter, data size: {1}", phase, byteOnlyData.size());
+        for (var pair : predicatePerColumn) {
+            byteOnlyData = DataFrameUtils.filter(byteOnlyData, pair.getFirst(), pair.getSecond());
+        }
+        LoggingUtils.format("{0} | After Filter, data size: {1}", phase, byteOnlyData.size());
+
+        byteOnlyData = formula.frame(byteOnlyData);
+
+        LoggingUtils.print("Schema: " + byteOnlyData.schema());
+        LoggingUtils.print("Formula: " + formula);
+
+        return byteOnlyData;
     }
 
     /**
