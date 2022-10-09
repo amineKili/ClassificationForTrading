@@ -1,6 +1,6 @@
 package com.aminekili.aitrading;
 
-import com.aminekili.aitrading.model.logic.GradientBoostedTreesImpl;
+import com.aminekili.aitrading.model.implementation.GradientBoostedTreesImpl;
 import com.aminekili.aitrading.utils.Pair;
 
 import java.io.IOException;

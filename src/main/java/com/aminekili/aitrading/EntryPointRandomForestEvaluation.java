@@ -1,6 +1,6 @@
 package com.aminekili.aitrading;
 
-import com.aminekili.aitrading.model.logic.RandomForestImpl;
+import com.aminekili.aitrading.model.implementation.RandomForestImpl;
 import com.aminekili.aitrading.utils.Pair;
 
 import java.io.IOException;
