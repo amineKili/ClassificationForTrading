@@ -2,6 +2,7 @@ package com.aminekili.aitrading.model.logic;
 
 import com.aminekili.aitrading.model.BaseModel;
 import com.aminekili.aitrading.service.CsvReader;
+import com.aminekili.aitrading.utils.ConfusionMatrix;
 import com.aminekili.aitrading.utils.DataFrameUtils;
 import com.aminekili.aitrading.utils.LoggingUtils;
 import com.aminekili.aitrading.utils.Pair;
@@ -84,13 +85,21 @@ public class RandomForestImpl implements BaseModel {
     public void test() throws IOException, URISyntaxException {
         var dataFrame = getDataFrameReady(testingPath, "TEST");
 
+        var predictedStr = new String[dataFrame.size()];
+        var actualStr = new String[dataFrame.size()];
+
         for (int i = 0; i < dataFrame.size(); i++) {
             var row = dataFrame.get(i);
             var prediction = model.predict(row);
             var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction).byteValue(), "NONE");
             var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").get(row.getByte("EXECUTE"));
+            predictedStr[i] = predictedStringCategory;
+            actualStr[i] = actualStringCategory;
             LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
         }
+
+        var confusionMatrix = new ConfusionMatrix(predictedStr, actualStr);
+        LoggingUtils.print(confusionMatrix.toString());
     }
 
     /**
@@ -105,7 +114,7 @@ public class RandomForestImpl implements BaseModel {
 
 
         var classificationValidation = ClassificationValidation.of(formula, byteOnlyTrainingData, byteOnlyTestData,
-                (f, x) -> RandomForest.fit(f, x, 20, 2, SplitRule.GINI, 8, 10, 1, 1.0, new int[]{1, 100}, Arrays.stream(seeds))
+                (f, x) -> RandomForest.fit(f, x, 20, 2, SplitRule.GINI, 2, 10, 1, 1.0, new int[]{1, 100}, Arrays.stream(seeds))
         );
 
         LoggingUtils.print(MessageFormat.format("Evaluation metrics = {0}", classificationValidation.toString()));
@@ -153,7 +162,7 @@ public class RandomForestImpl implements BaseModel {
      * @param tesla6: tesla6
      * @param tesla9: tesla9
      */
-    public String predict(double open, double high, double low, double close, double wap, double volume, double count, double minute, double tesla3, double tesla6, double tesla9, double decision) {
+    public String predict(double open, double high, double low, double close, double wap, double volume, double count, double minute, double tesla3, double tesla6, double tesla9, String decision) {
         // TODO: implement
         return null;
     }

@@ -8,7 +8,7 @@ import java.net.URISyntaxException;
 import java.util.List;
 import java.util.function.Predicate;
 
-public class EntryPointTrainTest {
+public class EntryPointRandomForestTrainTest {
     public static void main(String... args) {
         try {
             Predicate<Double> filterMinute = val -> val == 20 || val == 40 || val == 0;

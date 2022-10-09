@@ -6,14 +6,10 @@ import com.aminekili.aitrading.utils.ConfusionMatrix;
 import com.aminekili.aitrading.utils.DataFrameUtils;
 import com.aminekili.aitrading.utils.LoggingUtils;
 import com.aminekili.aitrading.utils.Pair;
-import smile.base.mlp.Layer;
-import smile.base.mlp.OutputFunction;
-import smile.classification.MLP;
+import smile.classification.GradientTreeBoost;
 import smile.data.DataFrame;
-import smile.data.Tuple;
 import smile.data.formula.Formula;
 import smile.math.MathEx;
-import smile.math.TimeFunction;
 import smile.validation.ClassificationValidation;
 
 import java.io.IOException;
@@ -21,14 +17,17 @@ import java.net.URISyntaxException;
 import java.text.MessageFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.function.Predicate;
 
-public class MultilayerPerceptronNNImpl implements BaseModel {
+public class GradientBoostedTreesImpl implements BaseModel {
 
     /**
      * This class is responsible for the implementation of the Random Forest algorithm
      * it will be used to decide whether to execute flag should be set to true or false
      */
+
+    private static final int NUMBER_OF_TREES = 100;
 
     // initialized in static initialisation block
     public static final long[] seeds;
@@ -36,40 +35,28 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
     private final String trainingPath;
     private final String testingPath;
     private final String modelPath;
-    private MLP model;
+    private GradientTreeBoost model;
     private final List<Pair<String, Predicate<Double>>> predicatePerColumn;
+    private final Properties properties;
     private Map<String, Map<String, Byte>> stringCategoryMapByteCategory;
     private Map<String, Map<Byte, String>> byteCategoryMapStringCategory;
-    private static final int numberOfClasses = 2;
-    private static final double learningRate = 0.1;
-    private static final double momentum = 0.1;
-    private static final int epoch = 100;
-
-    // TODO: make this configurable and shared between all models
-    private static final String[] inputColumns = new String[]{
-            "Open", "High", "Low", "Close", "Volume",
-            "WAP", "Count", "Minute", "Tesla3",
-            "Tesla6", "Tesla9", "Decision"
-    };
-
-    private static final String outputColumn = "EXECUTE";
 
 
-    public static final Formula formula = Formula.of("EXECUTE",
-            "Open", "High", "Low", "Close", "Volume", "WAP", "Count", "Minute", "Tesla3", "Tesla6", "Tesla9", "Decision"
-    );
+    public static final Formula formula = Formula.of("EXECUTE", "WAP", "Count", "Minute", "Tesla3", "Tesla6", "Tesla9", "Decision");
 
 
     public static void main(String... args) {
 
     }
 
-    public MultilayerPerceptronNNImpl(String trainDataSetPath, String testDateSetPath, String modelPath, List<Pair<String, Predicate<Double>>> predicatePerColumn) throws IOException, URISyntaxException {
+    public GradientBoostedTreesImpl(String trainDataSetPath, String testDateSetPath, String modelPath, List<Pair<String, Predicate<Double>>> predicatePerColumn) throws IOException, URISyntaxException {
         MathEx.setSeed(19650218);
         this.trainingPath = trainDataSetPath;
         this.testingPath = testDateSetPath;
         this.modelPath = modelPath;
         this.predicatePerColumn = predicatePerColumn;
+        properties = new Properties();
+        properties.setProperty("smile.random.forest.trees", String.valueOf(NUMBER_OF_TREES));
     }
 
     /**
@@ -79,25 +66,9 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void train() throws IOException, URISyntaxException {
-        LoggingUtils.print("Start training");
         DataFrame byteOnlyData = getDataFrameReady(trainingPath, "TRAINING");
 
-        var net = new MLP(inputColumns.length,
-                Layer.sigmoid(numberOfClasses),
-                Layer.mle(1, OutputFunction.SIGMOID)
-        );
-
-        net.setLearningRate(TimeFunction.constant(learningRate));
-        net.setMomentum(TimeFunction.constant(momentum));
-
-
-        var pairTraining = getDataFrameAsArray(byteOnlyData);
-        for (int currentEpoch = 0; currentEpoch < epoch; currentEpoch++) {
-            net.update(pairTraining.getFirst(), pairTraining.getSecond());
-        }
-
-        LoggingUtils.print("Finished training");
-        this.model = net;
+        this.model = GradientTreeBoost.fit(formula, byteOnlyData, properties);
     }
 
     /**
@@ -107,23 +78,20 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void test() throws IOException, URISyntaxException {
+        // create confusion matrix
+
         var dataFrame = getDataFrameReady(testingPath, "TEST");
 
         var predictedStr = new String[dataFrame.size()];
         var actualStr = new String[dataFrame.size()];
-        var pair = getDataFrameAsArray(dataFrame);
 
         for (int i = 0; i < dataFrame.size(); i++) {
             var row = dataFrame.get(i);
-            var input = pair.getFirst()[i];
-
-            var prediction = model.predict(input);
+            var prediction = model.predict(row);
             var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction).byteValue(), "NONE");
             var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").get(row.getByte("EXECUTE"));
-
             predictedStr[i] = predictedStringCategory;
             actualStr[i] = actualStringCategory;
-
             LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
         }
 
@@ -141,77 +109,29 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
         DataFrame byteOnlyTrainingData = getDataFrameReady(trainingPath, "Evaluation");
         DataFrame byteOnlyTestData = getDataFrameReady(testingPath, "Evaluation");
 
-        var pairTrainingData = getDataFrameAsArray(byteOnlyTrainingData);
-        var pairTestData = getDataFrameAsArray(byteOnlyTestData);
-
-
-        var classificationValidation = ClassificationValidation.of(
-                pairTrainingData.getFirst(), pairTrainingData.getSecond(), pairTestData.getFirst(), pairTestData.getSecond(), (x, y) -> {
-                    var tempModel = new MLP(inputColumns.length,
-                            Layer.sigmoid(numberOfClasses),
-                            Layer.mle(100, OutputFunction.SIGMOID),
-                            Layer.mle(150, OutputFunction.SIGMOID),
-                            Layer.mle(1, OutputFunction.SIGMOID)
-
-                    );
-                    tempModel.setLearningRate(TimeFunction.constant(learningRate));
-                    tempModel.setMomentum(TimeFunction.constant(momentum));
-                    tempModel.update(x, y);
-                    return tempModel;
-                }
+        var classificationValidation = ClassificationValidation.of(formula, byteOnlyTrainingData, byteOnlyTestData,
+                (f, x) -> GradientTreeBoost.fit(f, x, 100, 2, 10, 1, 1, 1.0)
         );
 
         LoggingUtils.print(MessageFormat.format("Evaluation metrics = {0}", classificationValidation.toString()));
+
         int[] truth = classificationValidation.truth;
         int[] prediction = classificationValidation.prediction;
+
         for (int i = 0; i < truth.length; i++) {
             var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction[i]).byteValue(), "NONE");
             var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(truth[i]).byteValue(), "NONE");
             LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
         }
+
         System.out.println(MessageFormat.format("Confusion Matrix = {0}", classificationValidation.confusion.toString()));
-
-    }
-
-    private Pair<double[][], int[]> getDataFrameAsArray(DataFrame dataFrame) {
-        double[][] input = new double[dataFrame.size()][];
-        int[] result = new int[dataFrame.size()];
-        for (int i = 0; i < dataFrame.size(); i++) {
-            Tuple tuple = dataFrame.get(i);
-            double[] x = new double[inputColumns.length];
-            for (int j = 0; j < inputColumns.length; j++) {
-                if (dataFrame.column(inputColumns[j]).type().isDouble()) {
-                    x[j] = tuple.getDouble(inputColumns[j]);
-                } else if (dataFrame.column(inputColumns[j]).type().isInt()) {
-                    x[j] = tuple.getInt(inputColumns[j]);
-                } else if (dataFrame.column(inputColumns[j]).type().isByte()) {
-                    x[j] = tuple.getByte(inputColumns[j]);
-                } else {
-                    throw new RuntimeException("Unsupported type");
-                }
-            }
-            Short y = null;
-            if (dataFrame.column(outputColumn).type().isDouble()) {
-                y = Double.valueOf(tuple.getDouble(outputColumn)).shortValue();
-            } else if (dataFrame.column(outputColumn).type().isInt()) {
-                y = Integer.valueOf(tuple.getInt(outputColumn)).shortValue();
-            } else if (dataFrame.column(outputColumn).type().isByte()) {
-                y = Byte.valueOf(tuple.getByte(outputColumn)).shortValue();
-            } else {
-                throw new RuntimeException("Unsupported type");
-            }
-            input[i] = x;
-            result[i] = y;
-        }
-
-        return new Pair<>(input, result);
     }
 
     private DataFrame getDataFrameReady(String path, String phase) throws IOException, URISyntaxException {
         var trainingData = CsvReader.read(path, formula);
 
-        this.stringCategoryMapByteCategory = DataFrameUtils.mapCategoricalColumns(trainingData, "EXECUTE", "Decision");
-        this.byteCategoryMapStringCategory = DataFrameUtils.mapValuesToCategoricalColumns(trainingData, "EXECUTE", "Decision");
+        stringCategoryMapByteCategory = DataFrameUtils.mapCategoricalColumns(trainingData, "EXECUTE", "Decision");
+        byteCategoryMapStringCategory = DataFrameUtils.mapValuesToCategoricalColumns(trainingData, "EXECUTE", "Decision");
 
         var byteOnlyData = DataFrameUtils.toByteCategoricalDataFrame(trainingData, stringCategoryMapByteCategory);
         byteOnlyData = formula.frame(byteOnlyData);
@@ -230,19 +150,19 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
         return byteOnlyData;
     }
 
-
+    /**
+     * This method will be used to predict the decision of the algorithm
+     *
+     * @param wap:    wap
+     * @param volume: volume
+     * @param count:  trades count
+     * @param minute: minute
+     * @param tesla3: tesla3
+     * @param tesla6: tesla6
+     * @param tesla9: tesla9
+     */
     public String predict(double open, double high, double low, double close, double wap, double volume, double count, double minute, double tesla3, double tesla6, double tesla9, String decision) {
-        // TODO: ensure model is trained
-        // if not, throw an exception
-
-        // TODO: use the categoricalMap to convert the decision to a byte, and from a byte to double
-//        double[] input = new double[]{open, high, low, close, wap, volume, count, minute, tesla3, tesla6, tesla9, decision};
-//
-//        var prediction = model.predict(input);
-//
-//        LoggingUtils.print(MessageFormat.format("Prediction: {0}", prediction));
-//
-//        return byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction).byteValue(), "NONE");
+        // TODO: implement
         return null;
     }
 
