@@ -11,7 +11,7 @@ public interface BaseModel {
 
     void evaluateModelPrecision() throws IOException, URISyntaxException;
 
-    void predict(double wap, double volume, double count, double minute, double tesla3, double tesla6, double tesla9);
+    String predict(double open, double high, double low, double close, double wap, double volume, double count, double minute, double tesla3, double tesla6, double tesla9, double decision);
 
     // TODO: implement
     default BaseModel read(String filePath) {
