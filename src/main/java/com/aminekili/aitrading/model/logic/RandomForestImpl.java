@@ -10,8 +10,7 @@ import smile.classification.RandomForest;
 import smile.data.DataFrame;
 import smile.data.formula.Formula;
 import smile.math.MathEx;
-import smile.validation.ClassificationMetrics;
-import smile.validation.LOOCV;
+import smile.validation.ClassificationValidation;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
@@ -101,14 +100,23 @@ public class RandomForestImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void evaluateModelPrecision() throws IOException, URISyntaxException {
-        DataFrame byteOnlyData = getDataFrameReady(trainingPath, "Evaluation");
+        DataFrame byteOnlyTrainingData = getDataFrameReady(trainingPath, "Evaluation");
+        DataFrame byteOnlyTestData = getDataFrameReady(testingPath, "Evaluation");
 
-        ClassificationMetrics metrics = LOOCV.classification(formula, byteOnlyData,
+
+        var classificationValidation = ClassificationValidation.of(formula, byteOnlyTrainingData, byteOnlyTestData,
                 (f, x) -> RandomForest.fit(f, x, 20, 2, SplitRule.GINI, 8, 10, 1, 1.0, new int[]{1, 100}, Arrays.stream(seeds))
         );
 
-        LoggingUtils.print(MessageFormat.format("Evaluation metrics = {0}", metrics.toString()));
-        LoggingUtils.print(MessageFormat.format("Accuracy = {0}", metrics.accuracy));
+        LoggingUtils.print(MessageFormat.format("Evaluation metrics = {0}", classificationValidation.toString()));
+        int[] truth = classificationValidation.truth;
+        int[] prediction = classificationValidation.prediction;
+        for (int i = 0; i < truth.length; i++) {
+            var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction[i]).byteValue(), "NONE");
+            var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(truth[i]).byteValue(), "NONE");
+            LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
+        }
+        System.out.println(MessageFormat.format("Confusion Matrix = {0}", classificationValidation.confusion.toString()));
     }
 
     private DataFrame getDataFrameReady(String path, String phase) throws IOException, URISyntaxException {
