@@ -1,4 +1,4 @@
-package com.aminekili.aitrading.model.logic;
+package com.aminekili.aitrading.model.implementation;
 
 import com.aminekili.aitrading.model.BaseModel;
 import com.aminekili.aitrading.service.CsvReader;
@@ -45,7 +45,6 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
     private static final double momentum = 0.1;
     private static final int epoch = 100;
 
-    // TODO: make this configurable and shared between all models
     private static final String[] inputColumns = new String[]{
             "Open", "High", "Low", "Close", "Volume",
             "WAP", "Count", "Minute", "Tesla3",
@@ -231,19 +230,19 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
     }
 
 
-    public String predict(double open, double high, double low, double close, double wap, double volume, double count, double minute, double tesla3, double tesla6, double tesla9, String decision) {
-        // TODO: ensure model is trained
-        // if not, throw an exception
+    public String predict(double open, double high, double low, double close, double wap, double volume,
+                          double count, double minute, double tesla3, double tesla6, double tesla9, String decision) {
+        if (model == null) {
+            throw new IllegalStateException("Model is not trained yet");
+        }
 
-        // TODO: use the categoricalMap to convert the decision to a byte, and from a byte to double
-//        double[] input = new double[]{open, high, low, close, wap, volume, count, minute, tesla3, tesla6, tesla9, decision};
-//
-//        var prediction = model.predict(input);
-//
-//        LoggingUtils.print(MessageFormat.format("Prediction: {0}", prediction));
-//
-//        return byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction).byteValue(), "NONE");
-        return null;
+        Byte decision_byte = stringCategoryMapByteCategory.get("Decision").get(decision);
+
+        double[] input = new double[]{open, high, low, close, wap, volume, count, minute, tesla3, tesla6, tesla9, decision_byte};
+
+        int prediction = model.predict(input);
+
+        return byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction).byteValue(), "NONE");
     }
 
 

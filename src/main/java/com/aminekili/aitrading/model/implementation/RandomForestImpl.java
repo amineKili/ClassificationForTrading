@@ -1,4 +1,4 @@
-package com.aminekili.aitrading.model.logic;
+package com.aminekili.aitrading.model.implementation;
 
 import com.aminekili.aitrading.model.BaseModel;
 import com.aminekili.aitrading.service.CsvReader;
@@ -10,6 +10,9 @@ import smile.base.cart.SplitRule;
 import smile.classification.RandomForest;
 import smile.data.DataFrame;
 import smile.data.formula.Formula;
+import smile.data.vector.BaseVector;
+import smile.data.vector.ByteVector;
+import smile.data.vector.DoubleVector;
 import smile.math.MathEx;
 import smile.validation.ClassificationValidation;
 
@@ -42,6 +45,12 @@ public class RandomForestImpl implements BaseModel {
     private final Properties properties;
     private Map<String, Map<String, Byte>> stringCategoryMapByteCategory;
     private Map<String, Map<Byte, String>> byteCategoryMapStringCategory;
+
+    private static final String[] inputColumns = new String[]{
+            "Open", "High", "Low", "Close", "Volume",
+            "WAP", "Count", "Minute", "Tesla3",
+            "Tesla6", "Tesla9", "Decision"
+    };
 
 
     public static final Formula formula = Formula.of("EXECUTE", "WAP", "Count", "Minute", "Tesla3", "Tesla6", "Tesla9", "Decision");
@@ -163,8 +172,34 @@ public class RandomForestImpl implements BaseModel {
      * @param tesla9: tesla9
      */
     public String predict(double open, double high, double low, double close, double wap, double volume, double count, double minute, double tesla3, double tesla6, double tesla9, String decision) {
-        // TODO: implement
-        return null;
+        if (model == null) {
+            throw new IllegalStateException("Model is not trained yet");
+        }
+
+        Byte decision_byte = stringCategoryMapByteCategory.get("Decision").get(decision);
+
+        var vector = new BaseVector[inputColumns.length];
+
+        vector[0] = DoubleVector.of("Open", new double[]{open});
+        vector[1] = DoubleVector.of("High", new double[]{high});
+        vector[2] = DoubleVector.of("Low", new double[]{low});
+        vector[3] = DoubleVector.of("Close", new double[]{close});
+
+        vector[4] = DoubleVector.of("WAP", new double[]{wap});
+        vector[5] = DoubleVector.of("Volume", new double[]{volume});
+        vector[6] = DoubleVector.of("Count", new double[]{count});
+        vector[7] = DoubleVector.of("Minute", new double[]{minute});
+        vector[8] = DoubleVector.of("Tesla3", new double[]{tesla3});
+        vector[9] = DoubleVector.of("Tesla6", new double[]{tesla6});
+        vector[10] = DoubleVector.of("Tesla9", new double[]{tesla9});
+        vector[11] = ByteVector.of("Decision", new byte[]{decision_byte});
+
+        var dataFrame = DataFrame.of(vector);
+
+
+        var prediction = model.predict(dataFrame)[0];
+
+        return byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction).byteValue(), "NONE");
     }
 
 
