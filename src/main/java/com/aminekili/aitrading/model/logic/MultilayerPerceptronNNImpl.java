@@ -13,11 +13,11 @@ import smile.data.Tuple;
 import smile.data.formula.Formula;
 import smile.math.MathEx;
 import smile.math.TimeFunction;
+import smile.validation.ClassificationValidation;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.text.MessageFormat;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
@@ -50,6 +50,8 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
             "WAP", "Count", "Minute", "Tesla3",
             "Tesla6", "Tesla9", "Decision"
     };
+
+    private static final String outputColumn = "EXECUTE";
 
 
     public static final Formula formula = Formula.of("EXECUTE",
@@ -88,8 +90,6 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
         net.setMomentum(TimeFunction.constant(momentum));
 
 
-        var outputColumn = "EXECUTE";
-
         for (int currentEpoch = 0; currentEpoch < epoch; currentEpoch++) {
             double[][] input = new double[byteOnlyData.size()][];
             int[] result = new int[byteOnlyData.size()];
@@ -119,11 +119,8 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
                 }
                 input[i] = x;
                 result[i] = y;
-                LoggingUtils.format("Input size: {0}, Input {1}, Output: {2}", input[i].length, Arrays.toString(input[i]), result[i]);
             }
-            LoggingUtils.format("Input size: {0}, Output: {1}", input.length, result.length);
             net.update(input, result);
-
         }
 
         LoggingUtils.print("Finished training");
@@ -168,7 +165,73 @@ public class MultilayerPerceptronNNImpl implements BaseModel {
      * @throws URISyntaxException
      */
     public void evaluateModelPrecision() throws IOException, URISyntaxException {
-        // TODO: implement proper evaluation
+        DataFrame byteOnlyTrainingData = getDataFrameReady(trainingPath, "Evaluation");
+        DataFrame byteOnlyTestData = getDataFrameReady(testingPath, "Evaluation");
+
+        var pairTrainingData = getDataFrameAsArray(byteOnlyTrainingData);
+        var pairTestData = getDataFrameAsArray(byteOnlyTestData);
+
+
+        var classificationValidation = ClassificationValidation.of(
+                pairTrainingData.getFirst(), pairTrainingData.getSecond(), pairTestData.getFirst(), pairTestData.getSecond(), (x, y) -> {
+                    var tempModel = new MLP(inputColumns.length,
+                            Layer.sigmoid(numberOfClasses),
+                            Layer.mle(100, OutputFunction.SIGMOID),
+                            Layer.mle(150, OutputFunction.SIGMOID),
+                            Layer.mle(1, OutputFunction.SIGMOID)
+
+                    );
+                    tempModel.setLearningRate(TimeFunction.constant(learningRate));
+                    tempModel.setMomentum(TimeFunction.constant(momentum));
+                    tempModel.update(x, y);
+                    return tempModel;
+                }
+        );
+
+        LoggingUtils.print(MessageFormat.format("Evaluation metrics = {0}", classificationValidation.toString()));
+        int[] truth = classificationValidation.truth;
+        int[] prediction = classificationValidation.prediction;
+        for (int i = 0; i < truth.length; i++) {
+            var predictedStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(prediction[i]).byteValue(), "NONE");
+            var actualStringCategory = byteCategoryMapStringCategory.get("EXECUTE").getOrDefault(Integer.valueOf(truth[i]).byteValue(), "NONE");
+            LoggingUtils.print(MessageFormat.format("Prediction: {0} - Actual: {1}", predictedStringCategory, actualStringCategory));
+        }
+        System.out.println(MessageFormat.format("Confusion Matrix = {0}", classificationValidation.confusion.toString()));
+
+    }
+
+    private Pair<double[][], int[]> getDataFrameAsArray(DataFrame dataFrame) {
+        double[][] input = new double[dataFrame.size()][];
+        int[] result = new int[dataFrame.size()];
+        for (int i = 0; i < dataFrame.size(); i++) {
+            Tuple tuple = dataFrame.get(i);
+            double[] x = new double[inputColumns.length];
+            for (int j = 0; j < inputColumns.length; j++) {
+                if (dataFrame.column(inputColumns[j]).type().isDouble()) {
+                    x[j] = tuple.getDouble(inputColumns[j]);
+                } else if (dataFrame.column(inputColumns[j]).type().isInt()) {
+                    x[j] = tuple.getInt(inputColumns[j]);
+                } else if (dataFrame.column(inputColumns[j]).type().isByte()) {
+                    x[j] = tuple.getByte(inputColumns[j]);
+                } else {
+                    throw new RuntimeException("Unsupported type");
+                }
+            }
+            Short y = null;
+            if (dataFrame.column(outputColumn).type().isDouble()) {
+                y = Double.valueOf(tuple.getDouble(outputColumn)).shortValue();
+            } else if (dataFrame.column(outputColumn).type().isInt()) {
+                y = Integer.valueOf(tuple.getInt(outputColumn)).shortValue();
+            } else if (dataFrame.column(outputColumn).type().isByte()) {
+                y = Byte.valueOf(tuple.getByte(outputColumn)).shortValue();
+            } else {
+                throw new RuntimeException("Unsupported type");
+            }
+            input[i] = x;
+            result[i] = y;
+        }
+
+        return new Pair<>(input, result);
     }
 
     private DataFrame getDataFrameReady(String path, String phase) throws IOException, URISyntaxException {
